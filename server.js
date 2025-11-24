@@ -1,11 +1,9 @@
 /**
- * ESTE É UM EXEMPLO DE BACKEND (SERVER-SIDE)
- * Para usar:
- * 1. Crie uma pasta 'backend' no seu computador.
- * 2. Crie um arquivo package.json e instale: npm install express mysql2 cors body-parser
- * 3. Salve este arquivo como server.js
- * 4. Rode: node server.js
+ * Backend Server - Lanchonete AI Manager
+ * Suporta múltiplas instâncias com PM2 em cluster mode
  */
+
+require('dotenv').config({ path: process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local' });
 
 const express = require('express');
 const mysql = require('mysql2');
@@ -16,20 +14,26 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Configuração do Banco de Dados
+// Configuração do Banco de Dados a partir de variáveis de ambiente
 const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',      // Seu usuário do MySQL
-  password: 'password', // Sua senha do MySQL
-  database: 'lanchonete_db'
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'password',
+  database: process.env.DB_NAME || 'lanchonete_db',
+  port: process.env.DB_PORT || 3306
 });
 
 db.connect(err => {
   if (err) {
     console.error('Erro ao conectar no MySQL:', err);
-    return;
+    process.exit(1);
   }
-  console.log('Conectado ao MySQL');
+  console.log(`[Worker ${process.pid}] Conectado ao MySQL`);
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', pid: process.pid });
 });
 
 // --- Rotas da API ---
@@ -96,6 +100,7 @@ app.post('/api/sales', async (req, res) => {
   }
 });
 
-app.listen(3001, () => {
-  console.log('Servidor rodando na porta 3001');
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`[Worker ${process.pid}] Servidor rodando na porta ${PORT}`);
 });
