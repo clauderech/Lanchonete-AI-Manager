@@ -17,14 +17,19 @@ import {
   ChefHat,
   Users,
   Clock,
-  Receipt
+  Receipt,
+  DollarSign,
+  FileText,
+  Wallet,
+  LogOut
 } from 'lucide-react';
 import { 
   AppState, 
   Product, 
   Sale, 
   Purchase, 
-  Supplier, 
+  Supplier,
+  Customer, 
   PageView, 
   CartItem, 
   ShoppingListItem,
@@ -33,15 +38,27 @@ import {
 } from './types';
 import { generateBusinessInsight, suggestRestockOrder } from './services/geminiService';
 import { storageService } from './services/storage';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend } from 'recharts';
+import FinancialDashboard from './components/FinancialDashboard';
+import ExpensesManager from './components/ExpensesManager';
+import CashRegister from './components/CashRegister';
+import ReportsView from './components/ReportsView';
+import CustomersManager from './components/CustomersManager';
+import LoyaltyProgram from './components/LoyaltyProgram';
+import Login from './components/Login';
+import { useAuth } from './hooks/useAuth';
 
 const App = () => {
+  // --- Authentication ---
+  const { user, isAuthenticated, login, logout, hasPermission } = useAuth();
+  
   // --- State Management ---
   const [view, setView] = useState<PageView>('dashboard');
   const [loading, setLoading] = useState(true);
   const [state, setState] = useState<AppState>({
     products: [],
     suppliers: [],
+    customers: [],
     sales: [],
     purchases: [],
     shoppingList: [],
@@ -84,15 +101,32 @@ const App = () => {
   };
 
   // --- Actions ---
-  const addSale = (items: CartItem[], paymentMethod: Sale['paymentMethod'], customerName?: string) => {
-    const total = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+  const addSale = (
+    items: CartItem[], 
+    paymentMethod: Sale['paymentMethod'], 
+    customerName?: string,
+    customerId?: string,
+    discountPercent?: number,
+    loyaltyPointsUsed?: number
+  ) => {
+    const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+    const discount = discountPercent ? (subtotal * discountPercent) / 100 : 0;
+    const total = subtotal - discount;
+    const loyaltyPointsEarned = Math.floor(total / 10);
+    
     const newSale: Sale = {
       id: Date.now().toString(),
       date: new Date().toISOString(),
       items,
+      subtotal,
       total,
+      discount,
+      discountPercent,
+      loyaltyPointsUsed,
+      loyaltyPointsEarned,
       paymentMethod,
-      customerName
+      customerName,
+      customerId
     };
 
     // If using API, we would call storageService.syncSale(newSale) here
@@ -119,10 +153,27 @@ const App = () => {
         }
       });
 
+      // Atualizar pontos de fidelidade do cliente
+      const updatedCustomers = customerId 
+        ? prev.customers.map(c => {
+            if (c.id === customerId) {
+              const currentPoints = c.loyaltyPoints || 0;
+              const usedPoints = loyaltyPointsUsed || 0;
+              const earnedPoints = loyaltyPointsEarned || 0;
+              return {
+                ...c,
+                loyaltyPoints: currentPoints - usedPoints + earnedPoints
+              };
+            }
+            return c;
+          })
+        : prev.customers;
+
       return {
         ...prev,
         sales: [...prev.sales, newSale],
-        products: Array.from(productsMap.values())
+        products: Array.from(productsMap.values()),
+        customers: updatedCustomers
       };
     });
   };
@@ -157,6 +208,31 @@ const App = () => {
 
   const addProduct = (product: Product) => {
     setState(prev => ({ ...prev, products: [...prev.products, product] }));
+  };
+
+  const addCustomer = (customer: Omit<Customer, 'id' | 'created_at' | 'updated_at'>) => {
+    const newCustomer: Customer = {
+      ...customer,
+      id: `customer_${Date.now()}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    setState(prev => ({ ...prev, customers: [...prev.customers, newCustomer] }));
+  };
+
+  const updateCustomer = (id: string, data: Partial<Customer>) => {
+    setState(prev => ({
+      ...prev,
+      customers: prev.customers.map(c => 
+        c.id === id ? { ...c, ...data, updated_at: new Date().toISOString() } : c
+      )
+    }));
+  };
+
+  const deleteCustomer = (id: string) => {
+    if (confirm('Deseja realmente excluir este cliente?')) {
+      setState(prev => ({ ...prev, customers: prev.customers.filter(c => c.id !== id) }));
+    }
   };
 
   // --- Comanda Actions ---
@@ -263,6 +339,19 @@ const App = () => {
     removeFromShoppingList(itemsToBuy.map(i => i.id));
   };
 
+  // --- Logout Handler ---
+  const handleLogout = () => {
+    if (confirm('Deseja realmente sair do sistema?')) {
+      logout();
+      setView('dashboard');
+    }
+  };
+
+  // --- Render Login if not authenticated ---
+  if (!isAuthenticated) {
+    return <Login onLogin={login} />;
+  }
+
 
   // --- Sub-Components ---
   const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
@@ -284,7 +373,9 @@ const App = () => {
     const [loadingInsight, setLoadingInsight] = useState(false);
 
     const totalSales = state.sales.reduce((acc, s) => acc + s.total, 0);
+    const totalPurchases = state.purchases.reduce((acc, p) => acc + p.total, 0);
     const lowStockCount = state.products.filter(p => p.type === 'insumo' && p.stock <= p.minStock).length;
+    const avgTicket = state.sales.length > 0 ? totalSales / state.sales.length : 0;
     
     const salesData = useMemo(() => {
       const last7Days = new Array(7).fill(0).map((_, i) => {
@@ -301,6 +392,58 @@ const App = () => {
       });
     }, [state.sales]);
 
+    // Top produtos vendidos
+    const topProducts = useMemo(() => {
+      const productSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
+      
+      state.sales.forEach(sale => {
+        sale.items.forEach(item => {
+          if (!productSales[item.productId]) {
+            productSales[item.productId] = { name: item.productName, quantity: 0, revenue: 0 };
+          }
+          productSales[item.productId].quantity += item.quantity;
+          productSales[item.productId].revenue += item.quantity * item.unitPrice;
+        });
+      });
+
+      return Object.values(productSales)
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 5);
+    }, [state.sales]);
+
+    // Vendas por categoria
+    const salesByCategory = useMemo(() => {
+      const categoryData: Record<string, number> = {};
+      
+      state.sales.forEach(sale => {
+        sale.items.forEach(item => {
+          const product = state.products.find(p => p.id === item.productId);
+          const category = product?.category || 'Outros';
+          categoryData[category] = (categoryData[category] || 0) + (item.quantity * item.unitPrice);
+        });
+      });
+
+      return Object.entries(categoryData).map(([name, value]) => ({ name, value }));
+    }, [state.sales, state.products]);
+
+    // Vendas por forma de pagamento
+    const paymentMethodData = useMemo(() => {
+      const methods: Record<string, number> = { cash: 0, card: 0, pix: 0, credit: 0 };
+      
+      state.sales.forEach(sale => {
+        methods[sale.paymentMethod] = (methods[sale.paymentMethod] || 0) + sale.total;
+      });
+
+      return Object.entries(methods)
+        .map(([name, value]) => ({ 
+          name: name === 'cash' ? 'Dinheiro' : name === 'card' ? 'Cartão' : name === 'pix' ? 'PIX' : 'Crédito', 
+          value 
+        }))
+        .filter(item => item.value > 0);
+    }, [state.sales]);
+
+    const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
+
     const handleGenerateInsight = async () => {
       setLoadingInsight(true);
       const result = await generateBusinessInsight(state.products, state.sales, state.purchases);
@@ -312,57 +455,92 @@ const App = () => {
       <div className="p-6 space-y-6">
         <h2 className="text-2xl font-bold text-gray-900">Painel de Controle</h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 p-6 rounded-xl shadow-lg text-white">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-gray-600 text-sm font-bold">Vendas Totais</h3>
-              <TrendingUp className="text-emerald-600 w-6 h-6" />
+              <h3 className="text-white/90 text-sm font-bold">Vendas Totais</h3>
+              <TrendingUp className="text-white/90 w-6 h-6" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">R$ {totalSales.toFixed(2)}</p>
-            <p className="text-xs text-gray-500 mt-1 font-medium">{state.sales.length} transações</p>
+            <p className="text-3xl font-bold">R$ {totalSales.toFixed(2)}</p>
+            <p className="text-xs text-white/80 mt-1 font-medium">{state.sales.length} transações</p>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 p-6 rounded-xl shadow-lg text-white">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-gray-600 text-sm font-bold">Insumos Críticos</h3>
-              <AlertTriangle className="text-amber-500 w-6 h-6" />
+              <h3 className="text-white/90 text-sm font-bold">Ticket Médio</h3>
+              <Receipt className="text-white/90 w-6 h-6" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">{lowStockCount}</p>
-            <p className="text-xs text-gray-500 mt-1 font-medium">Abaixo do mínimo</p>
+            <p className="text-3xl font-bold">R$ {avgTicket.toFixed(2)}</p>
+            <p className="text-xs text-white/80 mt-1 font-medium">Por venda</p>
           </div>
 
-           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="bg-gradient-to-br from-amber-500 to-amber-600 p-6 rounded-xl shadow-lg text-white">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-gray-600 text-sm font-bold">Comandas Abertas</h3>
-              <Users className="text-blue-600 w-6 h-6" />
+              <h3 className="text-white/90 text-sm font-bold">Insumos Críticos</h3>
+              <AlertTriangle className="text-white/90 w-6 h-6" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">{state.activeComandas.length}</p>
-            <p className="text-xs text-gray-500 mt-1 font-medium">Em atendimento</p>
+            <p className="text-3xl font-bold">{lowStockCount}</p>
+            <p className="text-xs text-white/80 mt-1 font-medium">Abaixo do mínimo</p>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 p-6 rounded-xl shadow-lg text-white">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-gray-600 text-sm font-bold">Produtos</h3>
-              <ChefHat className="text-purple-600 w-6 h-6" />
+              <h3 className="text-white/90 text-sm font-bold">Comandas Abertas</h3>
+              <Users className="text-white/90 w-6 h-6" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">{state.products.filter(p => p.type === 'prato').length}</p>
-            <p className="text-xs text-gray-500 mt-1 font-medium">Pratos no cardápio</p>
+            <p className="text-3xl font-bold">{state.activeComandas.length}</p>
+            <p className="text-xs text-white/80 mt-1 font-medium">Em atendimento</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-80">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
              <h3 className="text-lg font-bold text-gray-800 mb-4">Vendas da Semana</h3>
-             <ResponsiveContainer width="100%" height="100%">
+             <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={salesData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: '#4b5563' }} />
-                  {/* Fixed: Removed invalid 'prefix' prop and used 'tickFormatter' instead */}
                   <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => `R$ ${value}`} tick={{ fill: '#4b5563' }} />
                   <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', color: '#000' }} />
-                  <Line type="monotone" dataKey="total" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                 </LineChart>
              </ResponsiveContainer>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Top 5 Produtos Vendidos</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={topProducts}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#4b5563', fontSize: 11 }} />
+                <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => `R$ ${value}`} tick={{ fill: '#4b5563' }} />
+                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Bar dataKey="revenue" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Vendas por Categoria</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <PieChart>
+                <Pie
+                  data={salesByCategory}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {salesByCategory.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => `R$ ${value.toFixed(2)}`} />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
 
           <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-xl border border-indigo-100">
@@ -405,6 +583,10 @@ const App = () => {
     // Comanda State
     const [selectedComandaId, setSelectedComandaId] = useState<string | null>(null);
     const [newCustomerName, setNewCustomerName] = useState('');
+    
+    // Customer Selection and Loyalty
+    const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+    const [appliedDiscount, setAppliedDiscount] = useState<{ percent: number; pointsUsed: number } | null>(null);
 
     // Reset cart when switching modes or comandas
     useEffect(() => {
@@ -445,9 +627,27 @@ const App = () => {
 
     const handleQuickCheckout = () => {
       if (cart.length === 0) return;
-      addSale(cart, 'cash');
+      
+      const customer = state.customers.find(c => c.id === selectedCustomerId);
+      const customerName = customer ? `${customer.nome} ${customer.sobrenome || ''}`.trim() : undefined;
+      
+      addSale(
+        cart, 
+        'cash', 
+        customerName,
+        selectedCustomerId || undefined,
+        appliedDiscount?.percent,
+        appliedDiscount?.pointsUsed
+      );
+      
       setCart([]);
+      setSelectedCustomerId('');
+      setAppliedDiscount(null);
       alert("Venda Rápida finalizada!");
+    };
+    
+    const handleApplyDiscount = (discountPercent: number, pointsToDeduct: number) => {
+      setAppliedDiscount({ percent: discountPercent, pointsUsed: pointsToDeduct });
     };
 
     const handleCreateComanda = () => {
@@ -473,8 +673,12 @@ const App = () => {
       }
     };
 
-    const cartTotal = cart.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
+    const cartSubtotal = cart.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
+    const cartDiscount = appliedDiscount ? (cartSubtotal * appliedDiscount.percent) / 100 : 0;
+    const cartTotal = cartSubtotal - cartDiscount;
     const selectedComanda = state.activeComandas.find(c => c.id === selectedComandaId);
+    const selectedCustomer = state.customers.find(c => c.id === selectedCustomerId);
+    const customerLoyaltyPoints = selectedCustomer?.loyaltyPoints || 0;
 
     return (
       <div className="h-screen flex flex-col md:flex-row overflow-hidden">
@@ -555,20 +759,52 @@ const App = () => {
             {activeTab === 'comandas' && !selectedComandaId && (
               <div className="p-4 space-y-4">
                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <h3 className="font-bold text-gray-900 mb-2">Nova Comanda</h3>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Nome do Cliente / Mesa" 
-                      className="flex-1 border border-gray-400 p-2 rounded-lg text-black bg-white placeholder-gray-600"
-                      value={newCustomerName}
-                      onChange={e => setNewCustomerName(e.target.value)}
-                    />
+                  <h3 className="font-bold text-gray-900 mb-3">Nova Comanda</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">
+                        Cliente (opcional)
+                      </label>
+                      <select
+                        className="w-full border border-gray-400 p-2 rounded-lg text-black bg-white"
+                        value={selectedCustomerId}
+                        onChange={e => {
+                          setSelectedCustomerId(e.target.value);
+                          if (e.target.value) {
+                            const customer = state.customers.find(c => c.id === e.target.value);
+                            if (customer) {
+                              setNewCustomerName(`${customer.nome} ${customer.sobrenome || ''}`.trim());
+                            }
+                          } else {
+                            setNewCustomerName('');
+                          }
+                        }}
+                      >
+                        <option value="">Sem cadastro</option>
+                        {state.customers.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.nome} {c.sobrenome || ''} {c.fone ? `- ${c.fone}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">
+                        Nome / Mesa
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="Nome do Cliente / Mesa" 
+                        className="w-full border border-gray-400 p-2 rounded-lg text-black bg-white placeholder-gray-600"
+                        value={newCustomerName}
+                        onChange={e => setNewCustomerName(e.target.value)}
+                      />
+                    </div>
                     <button 
                       onClick={handleCreateComanda}
-                      className="bg-blue-600 text-white px-4 rounded-lg font-bold hover:bg-blue-700"
+                      className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700"
                     >
-                      Abrir
+                      Abrir Comanda
                     </button>
                   </div>
                 </div>
@@ -637,10 +873,57 @@ const App = () => {
 
           {/* Footer Actions */}
           {(activeTab === 'quick' || selectedComandaId) && (
-            <div className="p-6 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-gray-700 font-medium">Total</span>
-                <span className="text-3xl font-black text-gray-900">R$ {cartTotal.toFixed(2)}</span>
+            <div className="p-6 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] space-y-4">
+              {activeTab === 'quick' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-2">
+                      Cliente (opcional)
+                    </label>
+                    <select
+                      className="w-full border border-gray-400 p-2 rounded-lg text-black bg-white text-sm"
+                      value={selectedCustomerId}
+                      onChange={e => {
+                        setSelectedCustomerId(e.target.value);
+                        setAppliedDiscount(null); // Reset discount when changing customer
+                      }}
+                    >
+                      <option value="">Sem cadastro</option>
+                      {state.customers.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.nome} {c.sobrenome || ''} {c.fone ? `- ${c.fone}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {selectedCustomerId && cart.length > 0 && (
+                    <LoyaltyProgram 
+                      loyaltyPoints={customerLoyaltyPoints}
+                      onApplyDiscount={handleApplyDiscount}
+                      cartTotal={cartSubtotal}
+                    />
+                  )}
+                </>
+              )}
+              
+              <div>
+                {appliedDiscount && (
+                  <div className="mb-2 space-y-1">
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Subtotal</span>
+                      <span className="font-medium">R$ {cartSubtotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-green-600 font-bold">
+                      <span>Desconto ({appliedDiscount.percent}%)</span>
+                      <span>- R$ {cartDiscount.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-700 font-medium">Total</span>
+                  <span className="text-3xl font-black text-gray-900">R$ {cartTotal.toFixed(2)}</span>
+                </div>
               </div>
               
               {activeTab === 'quick' ? (
@@ -1081,14 +1364,34 @@ const App = () => {
             <div className="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center">L</div>
             Lanchonete AI
           </h1>
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <p className="text-xs font-bold text-gray-600">Usuário:</p>
+            <p className="text-sm font-black text-gray-900">{user?.name}</p>
+            <p className="text-xs text-gray-500 capitalize mt-1">{user?.role}</p>
+          </div>
         </div>
         <nav className="flex-1 p-4">
-          <SidebarItem icon={LayoutDashboard} label="Dashboard" active={view === 'dashboard'} onClick={() => setView('dashboard')} />
-          <SidebarItem icon={ShoppingCart} label="PDV (Vendas)" active={view === 'pos'} onClick={() => setView('pos')} />
-          <SidebarItem icon={Package} label="Estoque / Receitas" active={view === 'inventory'} onClick={() => setView('inventory')} />
-          <SidebarItem icon={ClipboardList} label="Lista de Compras" active={view === 'shopping-list'} onClick={() => setView('shopping-list')} />
-          <SidebarItem icon={Truck} label="Entrada de Notas" active={view === 'purchases'} onClick={() => setView('purchases')} />
+          {hasPermission('view_dashboard') && <SidebarItem icon={LayoutDashboard} label="Dashboard" active={view === 'dashboard'} onClick={() => setView('dashboard')} />}
+          {hasPermission('view_pos') && <SidebarItem icon={ShoppingCart} label="PDV (Vendas)" active={view === 'pos'} onClick={() => setView('pos')} />}
+          {hasPermission('view_inventory') && <SidebarItem icon={Package} label="Estoque / Receitas" active={view === 'inventory'} onClick={() => setView('inventory')} />}
+          {hasPermission('manage_products') && <SidebarItem icon={Users} label="Clientes" active={view === 'customers'} onClick={() => setView('customers')} />}
+          {hasPermission('view_shopping_list') && <SidebarItem icon={ClipboardList} label="Lista de Compras" active={view === 'shopping-list'} onClick={() => setView('shopping-list')} />}
+          {hasPermission('view_purchases') && <SidebarItem icon={Truck} label="Entrada de Notas" active={view === 'purchases'} onClick={() => setView('purchases')} />}
+          <div className="my-2 border-t border-gray-200"></div>
+          {hasPermission('view_financial') && <SidebarItem icon={TrendingUp} label="Financeiro" active={view === 'financial'} onClick={() => setView('financial')} />}
+          {hasPermission('view_expenses') && <SidebarItem icon={Receipt} label="Despesas" active={view === 'expenses'} onClick={() => setView('expenses')} />}
+          {hasPermission('view_cash_register') && <SidebarItem icon={Wallet} label="Caixa" active={view === 'cash-register'} onClick={() => setView('cash-register')} />}
+          {hasPermission('view_reports') && <SidebarItem icon={FileText} label="Relatórios" active={view === 'reports'} onClick={() => setView('reports')} />}
         </nav>
+        <div className="p-4 border-t border-gray-200">
+          <button
+            onClick={handleLogout}
+            className="flex items-center w-full p-3 rounded-lg text-red-600 hover:bg-red-50 transition-colors font-semibold"
+          >
+            <LogOut className="w-5 h-5 mr-3" />
+            <span>Sair</span>
+          </button>
+        </div>
       </aside>
 
       <main className="flex-1 overflow-auto">
@@ -1099,8 +1402,13 @@ const App = () => {
             {view === 'dashboard' && <Dashboard />}
             {view === 'pos' && <POS />}
             {view === 'inventory' && <Inventory />}
+            {view === 'customers' && <CustomersManager customers={state.customers} sales={state.sales} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} />}
             {view === 'shopping-list' && <ShoppingListView />}
             {view === 'purchases' && <Purchases />}
+            {view === 'financial' && <FinancialDashboard />}
+            {view === 'expenses' && <ExpensesManager />}
+            {view === 'cash-register' && <CashRegister />}
+            {view === 'reports' && <ReportsView />}
            </>
         )}
       </main>

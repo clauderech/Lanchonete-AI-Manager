@@ -6,8 +6,15 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        port: 5173,
         host: '0.0.0.0',
+        strictPort: true, // Falha se a porta estiver em uso
+        allowedHosts: [
+          'lanchoneteaimanager.server',
+          'localhost',
+          '127.0.0.1',
+          '0.0.0.0'
+        ]
       },
       plugins: [react()],
       define: {

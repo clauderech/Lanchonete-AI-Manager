@@ -46,6 +46,7 @@ app.get('/api/initial-state', async (req, res) => {
   try {
     const [products] = await db.promise().query('SELECT * FROM products WHERE is_active = TRUE');
     const [suppliers] = await db.promise().query('SELECT * FROM suppliers');
+    const [customers] = await db.promise().query('SELECT * FROM customers');
     const [sales] = await db.promise().query('SELECT * FROM sales ORDER BY date DESC LIMIT 100');
     const [purchases] = await db.promise().query('SELECT * FROM purchases ORDER BY date DESC LIMIT 100');
     const [shoppingList] = await db.promise().query('SELECT * FROM shopping_list WHERE is_purchased = FALSE');
@@ -80,7 +81,7 @@ app.get('/api/initial-state', async (req, res) => {
       comanda.items = items;
     }
 
-    res.json({ products, suppliers, sales, purchases, shoppingList, activeComandas });
+    res.json({ products, suppliers, customers, sales, purchases, shoppingList, activeComandas });
   } catch (err) {
     console.error('Erro ao buscar estado inicial:', err);
     res.status(500).json({ error: err.message });
@@ -347,6 +348,41 @@ app.post('/api/suppliers', async (req, res) => {
     );
     
     res.json({ success: true, supplierId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- CLIENTES ---
+app.get('/api/customers', async (req, res) => {
+  try {
+    const [customers] = await db.promise().query('SELECT * FROM customers ORDER BY nome');
+    res.json(customers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/customers', async (req, res) => {
+  try {
+    const { nome, sobrenome, fone } = req.body;
+    const customerId = `customer_${Date.now()}`;
+    
+    await db.promise().query(
+      `INSERT INTO customers (id, nome, sobrenome, fone) VALUES (?, ?, ?, ?)`,
+      [customerId, nome, sobrenome, fone]
+    );
+    
+    res.json({ success: true, customerId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/customers/:id', async (req, res) => {
+  try {
+    await db.promise().query('DELETE FROM customers WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

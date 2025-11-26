@@ -4,6 +4,16 @@
 // Tipos TypeScript alinhados com database_unified.sql
 // =========================================
 
+export interface Customer {
+  id: string;
+  nome: string;
+  sobrenome?: string;
+  fone?: string;
+  loyaltyPoints?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Supplier {
   id: string;
   name: string;
@@ -76,7 +86,11 @@ export interface Sale {
   total: number;
   subtotal: number;
   discount?: number;
+  discountPercent?: number;
+  loyaltyPointsUsed?: number;
+  loyaltyPointsEarned?: number;
   paymentMethod: PaymentMethod;
+  customerId?: string;
   customerName?: string;
   customerPhone?: string;
   comandaId?: string;
@@ -93,6 +107,7 @@ export interface ComandaItem extends CartItem {
 
 export interface Comanda {
   id: string;
+  customerId?: string;
   customerName: string;
   tableNumber?: string;
   openedAt: string;
@@ -212,6 +227,7 @@ export interface StockMovement {
 export interface AppState {
   products: Product[];
   suppliers: Supplier[];
+  customers: Customer[];
   sales: Sale[];
   purchases: Purchase[];
   shoppingList: ShoppingListItem[];
@@ -224,7 +240,8 @@ export interface AppState {
 export type PageView = 
   | 'dashboard' 
   | 'pos' 
-  | 'inventory' 
+  | 'inventory'
+  | 'customers' 
   | 'purchases' 
   | 'suppliers' 
   | 'shopping-list'

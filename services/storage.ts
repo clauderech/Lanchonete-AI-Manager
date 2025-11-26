@@ -8,6 +8,7 @@ import type {
   AppState, 
   Product, 
   Supplier, 
+  Customer,
   Sale, 
   Purchase, 
   ShoppingListItem, 
@@ -15,8 +16,8 @@ import type {
   CartItem
 } from '../types';
 
-// CONFIGURAÇÃO: Mude para true quando tiver o backend rodando
-const USE_API = process.env.NODE_ENV === 'production' ? true : false;
+// CONFIGURAÇÃO: Automático baseado no ambiente
+const USE_API = process.env.NODE_ENV === 'production';
 const API_URL = process.env.NODE_ENV === 'production' 
   ? '/api' 
   : 'http://localhost:3001/api';
@@ -41,6 +42,7 @@ export const storageService = {
         return {
           products: data.products.map(mapProductFromDB),
           suppliers: data.suppliers.map(mapSupplierFromDB),
+          customers: data.customers?.map(mapCustomerFromDB) || [],
           sales: data.sales?.map(mapSaleFromDB) || [],
           purchases: data.purchases?.map(mapPurchaseFromDB) || [],
           shoppingList: data.shoppingList?.map(mapShoppingListFromDB) || [],
@@ -270,6 +272,18 @@ function mapSupplierFromDB(s: any): Supplier {
   };
 }
 
+function mapCustomerFromDB(c: any): Customer {
+  return {
+    id: c.id,
+    nome: c.nome,
+    fone: c.fone,
+    email: c.email,
+    endereco: c.endereco,
+    dataCadastro: c.data_cadastro,
+    loyaltyPoints: c.loyalty_points || 0
+  };
+}
+
 function mapSaleFromDB(s: any): Sale {
   return {
     id: s.id,
@@ -339,6 +353,7 @@ function loadFromLocalStorage(): AppState {
     return {
       products: parsed.products || [],
       suppliers: parsed.suppliers || [],
+      customers: parsed.customers || [],
       sales: parsed.sales || [],
       purchases: parsed.purchases || [],
       shoppingList: parsed.shoppingList || [],
@@ -350,6 +365,7 @@ function loadFromLocalStorage(): AppState {
   return {
     products: [],
     suppliers: [],
+    customers: [],
     sales: [],
     purchases: [],
     shoppingList: [],

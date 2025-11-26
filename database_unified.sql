@@ -10,6 +10,21 @@ CREATE DATABASE IF NOT EXISTS lanchonete_db CHARACTER SET utf8mb4 COLLATE utf8mb
 USE lanchonete_db;
 
 -- =========================================
+-- TABELA: customers (Clientes)
+-- =========================================
+CREATE TABLE IF NOT EXISTS customers (
+    id VARCHAR(50) PRIMARY KEY,
+    nome VARCHAR(255) NOT NULL,
+    sobrenome VARCHAR(255),
+    fone VARCHAR(20),
+    loyalty_points INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_nome (nome),
+    INDEX idx_fone (fone)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =========================================
 -- TABELA: suppliers (Fornecedores)
 -- =========================================
 CREATE TABLE IF NOT EXISTS suppliers (
@@ -82,9 +97,13 @@ CREATE TABLE IF NOT EXISTS sales (
     date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     total DECIMAL(10, 2) NOT NULL,
     payment_method ENUM('cash', 'card', 'pix', 'credit') NOT NULL,
+    customer_id VARCHAR(50) COMMENT 'ID do cliente cadastrado',
     customer_name VARCHAR(255),
     customer_phone VARCHAR(15),
     discount DECIMAL(10, 2) DEFAULT 0.00,
+    discount_percent DECIMAL(5, 2) DEFAULT 0.00 COMMENT 'Percentual de desconto aplicado',
+    loyalty_points_used INT DEFAULT 0 COMMENT 'Pontos de fidelidade usados nesta compra',
+    loyalty_points_earned INT DEFAULT 0 COMMENT 'Pontos ganhos nesta compra',
     subtotal DECIMAL(10, 2) NOT NULL COMMENT 'Total antes do desconto',
     comanda_id VARCHAR(50) COMMENT 'ID da comanda se for fechamento de conta',
     notes TEXT,
@@ -92,7 +111,9 @@ CREATE TABLE IF NOT EXISTS sales (
     INDEX idx_date (date),
     INDEX idx_payment (payment_method),
     INDEX idx_customer (customer_name),
-    INDEX idx_comanda (comanda_id)
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_comanda (comanda_id),
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =========================================
